@@ -49,7 +49,7 @@ async def main():
     app.router.add_route("*", "/", http_handler)  # Todas as rotas passam pelo WebSocket
 
     print("Servidor WebSocket e Proxy HTTP rodando no Render...")
-    await asyncio.gather(ws_server, web._run_app(app, port=10000))
+    await asyncio.gather(ws_server, web._run_app(app, port=8080))
 
 if __name__ == "__main__":
     asyncio.run(main())
