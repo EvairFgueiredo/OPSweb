@@ -48,7 +48,7 @@ async def handle_request(websocket, path):
             await websocket.close()
 
 async def main():
-    async with websockets.serve(handle_request, "0.0.0.0", 8080):
+    async with websockets.serve(handle_request, "0.0.0.0", 10000):
         print("Servidor de túnel reverso rodando na porta 8080.")
         await asyncio.Future()  # Mantém o servidor rodando
 
