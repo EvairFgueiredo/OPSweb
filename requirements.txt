@@ -1,1 +1,3 @@
+aiohttp
+asyncio
 websockets==12.0
