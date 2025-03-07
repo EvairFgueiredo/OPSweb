@@ -1,56 +1,55 @@
 import asyncio
 import websockets
+import aiohttp
+from aiohttp import web
 
-# Variável global para armazenar a conexão do cliente (túnel)
-tunnel = None
+# Armazena conexões WebSocket ativas
+clients = set()
 
-async def register_tunnel(websocket):
-    """Registra o cliente local que ficará responsável por encaminhar as requisições."""
-    global tunnel
-    tunnel = websocket
-    print("Túnel registrado pelo cliente local.")
+async def websocket_handler(websocket, path):
+    """Gerencia conexões WebSocket do cliente local (Programa 1)."""
+    print("Novo túnel WebSocket estabelecido.")
+    clients.add(websocket)
     try:
-        # Permanece ativo enquanto o cliente estiver conectado
-        await websocket.wait_closed()
-    finally:
-        tunnel = None
-        print("Túnel desconectado.")
+        async for message in websocket:
+            print(f"Requisição recebida via WebSocket ({len(message)} bytes)")
 
-async def handle_request(websocket, path):
-    global tunnel
-    # Se o caminho for "/register", tratamos como registro do túnel
-    if path == "/register":
-        await register_tunnel(websocket)
-    else:
-        # Se não houver túnel registrado, não é possível encaminhar a requisição
-        if tunnel is None:
-            await websocket.send("Nenhum túnel disponível.")
-            await websocket.close()
-            return
-        
-        try:
-            # Recebe os dados da requisição (pode ser, por exemplo, uma string contendo a requisição HTTP)
-            request_data = await websocket.recv()
-            print("Requisição recebida do usuário:", request_data)
-            
-            # Encaminha a requisição para o túnel (cliente local)
-            await tunnel.send(request_data)
-            print("Requisição encaminhada para o túnel local.")
-            
-            # Aguarda a resposta do cliente local
-            response_data = await tunnel.recv()
-            print("Resposta recebida do túnel:", response_data)
-            
-            # Envia a resposta de volta para o usuário
-            await websocket.send(response_data)
-        except Exception as e:
-            print("Erro no encaminhamento:", e)
-            await websocket.close()
+            # Encaminha a requisição HTTP para o Apache local no Render
+            async with aiohttp.ClientSession() as session:
+                async with session.request("GET", "https://127.0.0.1:443", data=message, ssl=False) as response:
+                    data = await response.read()
+
+            print(f"Resposta do Apache enviada ({len(data)} bytes)")
+            await websocket.send(data)  # Envia resposta de volta para o WebSocket
+    except websockets.exceptions.ConnectionClosed:
+        print("Conexão WebSocket encerrada.")
+    finally:
+        clients.remove(websocket)
+
+async def http_handler(request):
+    """Aceita requisições HTTP normais e as envia para um túnel WebSocket."""
+    if not clients:
+        return web.Response(status=503, text="Nenhum túnel WebSocket ativo.")
+
+    client = next(iter(clients))  # Pega um WebSocket disponível
+    data = await request.read()
+    
+    print(f"Recebida requisição HTTP ({len(data)} bytes), encaminhando via WebSocket...")
+    await client.send(data)  # Encaminha para WebSocket
+
+    response = await client.recv()  # Aguarda resposta do WebSocket
+    print(f"Resposta recebida via WebSocket ({len(response)} bytes), enviando ao cliente...")
+
+    return web.Response(body=response)
 
 async def main():
-    async with websockets.serve(handle_request, "0.0.0.0", 10000):
-        print("Servidor de túnel reverso rodando na porta 8080.")
-        await asyncio.Future()  # Mantém o servidor rodando
+    """Inicia o servidor WebSocket e o servidor HTTP no Render."""
+    ws_server = websockets.serve(websocket_handler, "0.0.0.0", 10000)
+    app = web.Application()
+    app.router.add_route("*", "/", http_handler)  # Todas as rotas passam pelo WebSocket
+
+    print("Servidor WebSocket e Proxy HTTP rodando no Render...")
+    await asyncio.gather(ws_server, web._run_app(app, port=10000))
 
 if __name__ == "__main__":
     asyncio.run(main())
